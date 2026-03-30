@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Pretext book reader: every page comes alive with real-time context-driven ambient animations. Text is laid out precisely with the Pretext engine as you read.">
+  <title>Pretext — Living Book Reader</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --page-bg: #f7f2e8;
+      --page-shadow: rgba(60, 40, 10, 0.22);
+      --ink: #1c1710;
+      --muted: #6b5f4a;
+      --rule: #d8cbbA;
+      --accent: #7a4f28;
+      --spine: #c8a96e;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: #0d0a07;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+    }
+
+    /* ── Atmospheric canvas ── */
+    #canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 0;
+      transition: opacity 1.2s ease;
+    }
+
+    /* ── Stage ── */
+    #stage {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      z-index: 1;
+    }
+
+    /* ── Mood badge ── */
+    #mood-badge {
+      font: 11px/1 "SF Mono", ui-monospace, monospace;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.55);
+      background: rgba(0,0,0,0.42);
+      padding: 6px 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.12);
+      transition: color 1s ease, border-color 1s ease;
+      white-space: nowrap;
+    }
+
+    /* ── Book card ── */
+    #book-wrap {
+      perspective: 1400px;
+      width: min(520px, calc(100vw - 32px));
+    }
+
+    #book {
+      position: relative;
+      width: 100%;
+      background: var(--page-bg);
+      border-radius: 4px 12px 12px 4px;
+      box-shadow:
+        -4px 0 0 0 var(--spine),
+        0 8px 40px var(--page-shadow),
+        0 2px 8px rgba(0,0,0,0.25);
+      transform-style: preserve-3d;
+      transition: transform 0.72s cubic-bezier(0.4, 0, 0.2, 1),
+                  box-shadow 1.2s ease,
+                  background 1.2s ease;
+      min-height: 340px;
+    }
+    #book.turning-left  { animation: page-flip-left  0.72s cubic-bezier(0.4, 0, 0.2, 1); }
+    #book.turning-right { animation: page-flip-right 0.72s cubic-bezier(0.4, 0, 0.2, 1); }
+
+    @keyframes page-flip-left {
+      0%   { transform: rotateY(0deg); }
+      40%  { transform: rotateY(-18deg); }
+      100% { transform: rotateY(0deg); }
+    }
+    @keyframes page-flip-right {
+      0%   { transform: rotateY(0deg); }
+      40%  { transform: rotateY(18deg); }
+      100% { transform: rotateY(0deg); }
+    }
+
+    /* ── Page header ── */
+    #page-header {
+      padding: 22px 28px 0;
+      border-bottom: 1px solid var(--rule);
+      padding-bottom: 14px;
+    }
+
+    #chapter-label {
+      font: 10px/1.2 "SF Mono", ui-monospace, monospace;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 4px;
+    }
+
+    #chapter-title {
+      font: 700 17px/1.25 "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+      color: var(--ink);
+    }
+
+    #book-source {
+      font: italic 11px/1.4 "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    /* ── Page body: line container ── */
+    #page-body {
+      position: relative;
+      padding: 18px 28px 22px;
+      /* height is set by JS based on layoutWithLines result */
+    }
+
+    /* Individual text lines — positioned absolutely by Pretext */
+    .book-line {
+      position: absolute;
+      white-space: pre;
+      color: var(--ink);
+      font: 17px/1 "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+      left: 28px;
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity 0.38s ease, transform 0.38s ease;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+
+    .book-line.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ── Page footer ── */
+    #page-footer {
+      padding: 10px 28px 18px;
+      border-top: 1px solid var(--rule);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    #page-number {
+      font: 11px/1.2 "SF Mono", ui-monospace, monospace;
+      color: var(--muted);
+    }
+
+    #progress-dots {
+      display: flex;
+      gap: 5px;
+    }
+
+    .progress-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--rule);
+      transition: background 0.3s ease, transform 0.3s ease;
+    }
+
+    .progress-dot.active {
+      background: var(--accent);
+      transform: scale(1.35);
+    }
+
+    /* ── Navigation buttons ── */
+    #nav {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .nav-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 20px;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.07);
+      color: rgba(255,255,255,0.75);
+      font: 13px/1 "Helvetica Neue", Helvetica, Arial, sans-serif;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .nav-btn:hover:not(:disabled) {
+      background: rgba(255,255,255,0.13);
+      border-color: rgba(255,255,255,0.3);
+      color: #fff;
+    }
+
+    .nav-btn:disabled {
+      opacity: 0.28;
+      cursor: default;
+    }
+
+    .nav-btn svg {
+      width: 14px;
+      height: 14px;
+      fill: currentColor;
+    }
+
+    /* ── Credit ── */
+    #credit {
+      position: fixed;
+      bottom: 12px;
+      right: 16px;
+      font: 11px/1 "Helvetica Neue", Helvetica, Arial, sans-serif;
+      color: rgba(255,255,255,0.22);
+      z-index: 10;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 580px) {
+      #book-wrap { width: calc(100vw - 20px); }
+      .book-line { font-size: 15px; left: 18px; }
+      #page-header { padding: 16px 18px 0; padding-bottom: 12px; }
+      #page-body { padding: 14px 18px 18px; }
+      #page-footer { padding: 8px 18px 14px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #book { transition: none; }
+      #book.turning-left, #book.turning-right { animation: none; }
+      .book-line { transition: opacity 0.18s ease; transform: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="stage">
+    <div id="mood-badge">✦ Loading…</div>
+
+    <div id="book-wrap">
+      <div id="book">
+        <div id="page-header">
+          <p id="chapter-label"></p>
+          <h1 id="chapter-title"></h1>
+          <p id="book-source"></p>
+        </div>
+
+        <div id="page-body" aria-live="polite" aria-label="Book page text"></div>
+
+        <div id="page-footer">
+          <span id="page-number"></span>
+          <div id="progress-dots" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+
+    <nav id="nav" aria-label="Page navigation">
+      <button class="nav-btn" id="prev-btn" aria-label="Previous page" disabled>
+        <svg viewBox="0 0 16 16"><path d="M10.5 2 L4.5 8 L10.5 14"/></svg>
+        Prev
+      </button>
+      <button class="nav-btn" id="next-btn" aria-label="Next page">
+        Next
+        <svg viewBox="0 0 16 16"><path d="M5.5 2 L11.5 8 L5.5 14"/></svg>
+      </button>
+    </nav>
+  </div>
+
+  <div id="credit">Powered by Pretext · Zero DOM measurements</div>
+
+  <script type="module" src="./book-reader.ts"></script>
+</body>
+</html>
